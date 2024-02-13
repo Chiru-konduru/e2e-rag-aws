@@ -3,6 +3,11 @@ import os
 import sys
 import boto3
 import streamlit as st
+import PyPDF2
+from io import BytesIO
+
+import shutil
+import tempfile
 
 #We'll use Titan embeddings model to generate embeddings
 
@@ -15,23 +20,57 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 
 #Vector Store libraries
-from langchain.vectorstores import faiss
+from langchain_community.vectorstores import faiss
 
 ##LLM Models
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 
-## Step 1: creating Bedrock clients
+## Step 1: creating/initialize Bedrock clients
 bedrock = boto3.client(service_name = "bedrock-runtime")
+
 bedrock_embedding = BedrockEmbeddings(model_id = "amazon.titan-embed-text-v1", client = bedrock)
+
+# Define the directory to save uploaded files
+path_to_save = 'C:/Users/kchir/OneDrive/Desktop/AWS Projects/e2e-RAG/data'
+os.makedirs(path_to_save, exist_ok=True)  # Create the directory if it does not exist
+
+def clear_directory(directory_path):
+    # Check if the directory exists
+    if os.path.exists(directory_path):
+        # Remove all files in the directory
+        for filename in os.listdir(directory_path):
+            file_path = os.path.join(directory_path, filename)
+
+            if file_path == r"C:/Users/kchir/OneDrive/Desktop/AWS Projects/e2e-RAG/faiss_index":
+                continue
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                print(f'Failed to delete {file_path}. Reason: {e}')
+
+
+# Function to save uploaded files to the local directory
+def save_uploaded_file(uploaded_file):
+    try:
+        with open(os.path.join(path_to_save, uploaded_file.name), "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        return True
+    except Exception as e:
+        print(e)
+        return False
+    
 
 ##Step 2: Data Ingestion 
 def data_ingestion():
-    loader = PyPDFDirectoryLoader("data")
+    loader = PyPDFDirectoryLoader(path_to_save)
     documents = loader.load()
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size = 10000, 
-                                                   chunk_overlap = 1000)
+    # Use RecursiveCharacterTextSplitter to split the loaded documents
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=8000, chunk_overlap=1000)
     docs = text_splitter.split_documents(documents)
     return docs
     
@@ -43,6 +82,7 @@ def get_vector_store(docs):
         bedrock_embedding
     )
     vectorstore_faiss.save_local("faiss_index")
+    return vectorstore_faiss
 
 def get_llama_llm():
     llm = Bedrock(model_id="meta.llama2-13b-chat-v1", client = bedrock,
@@ -50,11 +90,9 @@ def get_llama_llm():
     return llm
 
 prompt_template = """
-
-Human: Use the following pieces of context to provide a 
-concise answer to the question at the end but usse atleast summarize with 
-250 words with detailed explaantions. If you don't know the answer, 
-just say that you don't know, don't try to make up an answer.
+ Human: Use the following pieces of context to provide a concise answer to the question at the end. 
+Please summarize with at least 250 words with detailed explanations. If you don't know the answer, just say that you don't know. 
+Don't try to make up an answer.
 <context>
 {context}
 </context
@@ -68,6 +106,12 @@ PROMPT = PromptTemplate(template=prompt_template, input_variables =["context", "
 
 
 def get_response_llm(llm, vectorstore_faiss, query):
+
+    MAX_TOKENS = 4096
+
+    if len(query) > MAX_TOKENS:
+        query = query[:MAX_TOKENS]
+
     qa = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
@@ -81,30 +125,96 @@ def get_response_llm(llm, vectorstore_faiss, query):
     answer = qa({"query":query})
     return answer['result']
 
-#creating Streamlit application
+# Global variable to hold the vector store once created
+vectorstore_faiss = None
 
+# Add a function to handle responses and store them
+def store_response(key, response):
+    if 'responses' not in st.session_state:
+        st.session_state.responses = {}
+    st.session_state.responses[key] = response
+
+# Define a function to clear the session state
+def stop_interaction():
+    st.session_state['user_has_stopped'] = True
+    st.warning('Interaction has been stopped. Refresh the page to start again.')
+
+
+#creating Streamlit application
 def main():
     st.set_page_config("ConverseDoc")
-    st.header("Explore PDFs and Ask Questions")
+    #st.header("ConverseDoc: Explore PDFs and Ask Questions!")
+    st.markdown("<h1 style='text-align: center; color: white;'>ConverseDoc: Explore PDFs and Ask Questions!</h1>", unsafe_allow_html=True)
 
-    user_question = st.text_input("Ask a Question from the PDF Files")
 
-    with st.sidebar:
-        st.title("Update or Create vector Store:")
+    global vectorstore_faiss
+    
+    # Use session_state to store the vector store and the initial response
+    if 'vectorstore_faiss' not in st.session_state:
+        st.session_state.vectorstore_faiss = None
+    if 'llm' not in st.session_state:
+        st.session_state.llm = None
+    if 'queries' not in st.session_state:
+        st.session_state.queries = []
+    if 'responses' not in st.session_state:
+        st.session_state.responses = []
+    if 'user_has_stopped' not in st.session_state:
+        st.session_state.user_has_stopped = False
 
-        if st.button("Vectors update"):
-            with st.spinner("Processing..."):
-                docs = data_ingestion()
-                get_vector_store(docs)
-                st.success("Done")
+    # Stop interaction if the user has clicked the button
+    if st.session_state.user_has_stopped:
+        st.warning('You have chosen to stop the interaction. Please refresh the page to reset.')
+        return  # Stop further execution of the function
+    
+    uploaded_files = st.file_uploader("Upload PDFs", accept_multiple_files=True, type=["pdf"])
 
-    if st.button("Llama2 Output"):
-        with st.spinner("Processing..."):
-            faiss_index = faiss.FAISS.load_local("faiss_index", bedrock_embedding)
-            llm = get_llama_llm()
+    if uploaded_files and st.session_state.vectorstore_faiss is None:
+        #Clear the directory before saving new files to ensure only uploaded files are processed
+        clear_directory(path_to_save)
 
-            st.write(get_response_llm(llm,faiss_index,user_question))
-            st.success("Done")
+        for uploaded_file in uploaded_files:
+            save_successful = save_uploaded_file(uploaded_file)
+            if save_successful:
+                st.success(f"File  {uploaded_file.name}saved successfully.")
+            else:
+                st.error(f"Failed to save file {uploaded_file.name}.")
+
+            # Process saved files using PyPDFDirectoryLoader
+        with st.spinner("Processing and vectorizing uploaded files..."):
+            docs = data_ingestion()  # Adjust this function to use PyPDFDirectoryLoader as needed
+            st.session_state.vectorstore_faiss = get_vector_store(docs)
+
+    # Display previous queries and responses
+    for i, response in enumerate(st.session_state.responses):
+        st.markdown(f"<h3 style='color: white;'>Question {i+1}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<textarea disabled style='height:100px;width:100%;font-size:20px;'>{st.session_state.queries[i]}</textarea>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color: White;'>Answer {i+1}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<textarea disabled style='height:100px;width:100%;font-size:20px;'>{response}</textarea>", unsafe_allow_html=True)
+
+
+    # Input for user question and button to get answer      
+    new_question  = st.text_input("Ask a Question from the uploaded PDF Files", key="new_query")
+    if st.button("Get Answer") and new_question:
+            with st.spinner("Fetching answer..."):
+                if st.session_state.vectorstore_faiss is None:
+                    #Load the vector store; it should be updated with new documents
+                    st.session_state.vectorstore_faiss = faiss.FAISS.load_local("faiss_index", bedrock_embedding)
+                
+                if st.session_state.llm is None:
+                    st.session_state.llm = get_llama_llm()
+
+                if st.session_state.vectorstore_faiss is not None and st.session_state.llm is not None:
+                    new_response  = get_response_llm(st.session_state.llm, st.session_state.vectorstore_faiss, new_question)
+                    st.session_state.queries.append(new_question)
+                    st.session_state.responses.append(new_response)
+                    st.markdown(f"<h3 style='color: white ;'>Answer {len(st.session_state.queries)}</h3>", unsafe_allow_html=True)
+                    st.markdown(f"<textarea disabled style='height:100px;width:100%;font-size:20px;'>{new_response}</textarea>", unsafe_allow_html=True)
+                    #st.text_area(f"Answer {len(st.session_state.queries)}", value=new_response, disabled=True)
+                           
+    # Stop interaction button
+    if st.button('Stop Interaction'):
+        st.session_state.user_has_stopped = True
+        st.warning('Interaction has been stopped. Refresh the page to start again.')
 
 if __name__ == "__main__":
     main()
