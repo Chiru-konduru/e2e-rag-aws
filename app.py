@@ -100,7 +100,7 @@ def get_vector_store(docs):
 
 def get_llama_llm():
     llm = Bedrock(model_id="meta.llama2-13b-chat-v1", client = bedrock,
-                  model_kwargs={"max_gen_len":512, "temperature": 0.5, "top_p": 0.9})
+                  model_kwargs={"max_gen_len":512, "temperature": 0.7, "top_p": 0.95})
     return llm
 
 prompt_template = """
