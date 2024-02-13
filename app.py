@@ -27,12 +27,26 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 
 ## Step 1: creating/initialize Bedrock clients
-bedrock = boto3.client(service_name = "bedrock-runtime")
+# Access the AWS credentials from Streamlit's secrets
+aws_access_key_id = st.secrets["aws"]["aws_access_key_id"]
+aws_secret_access_key = st.secrets["aws"]["aws_secret_access_key"]
+aws_default_region = st.secrets["aws"]["aws_default_region"]
+
+# Initialize the Bedrock client with the AWS credentials
+bedrock = boto3.client(
+    service_name="bedrock-runtime",
+    region_name=aws_default_region,
+    aws_access_key_id=aws_access_key_id,
+    aws_secret_access_key=aws_secret_access_key
+)
+#bedrock = boto3.client(service_name = "bedrock-runtime")
 
 bedrock_embedding = BedrockEmbeddings(model_id = "amazon.titan-embed-text-v1", client = bedrock)
 
-# Define the directory to save uploaded files
-path_to_save = 'C:/Users/kchir/OneDrive/Desktop/AWS Projects/e2e-RAG/data'
+# Define the directory to save uploaded files -local
+#path_to_save = 'C:/Users/kchir/OneDrive/Desktop/AWS Projects/e2e-RAG/data'
+path_to_save = tempfile.mkdtemp()
+
 os.makedirs(path_to_save, exist_ok=True)  # Create the directory if it does not exist
 
 def clear_directory(directory_path):
@@ -41,8 +55,8 @@ def clear_directory(directory_path):
         # Remove all files in the directory
         for filename in os.listdir(directory_path):
             file_path = os.path.join(directory_path, filename)
-
-            if file_path == r"C:/Users/kchir/OneDrive/Desktop/AWS Projects/e2e-RAG/faiss_index":
+            #if file_path == r"C:/Users/kchir/OneDrive/Desktop/AWS Projects/e2e-RAG/faiss_index":
+            if filename == "faiss_index":
                 continue
             try:
                 if os.path.isfile(file_path) or os.path.islink(file_path):
@@ -86,7 +100,7 @@ def get_vector_store(docs):
 
 def get_llama_llm():
     llm = Bedrock(model_id="meta.llama2-13b-chat-v1", client = bedrock,
-                  model_kwargs={"max_gen_len":512, "temperature": 0.7, "top_p": 0.9})
+                  model_kwargs={"max_gen_len":512, "temperature": 0.5, "top_p": 0.9})
     return llm
 
 prompt_template = """
@@ -209,7 +223,6 @@ def main():
                     st.session_state.responses.append(new_response)
                     st.markdown(f"<h3 style='color: white ;'>Answer {len(st.session_state.queries)}</h3>", unsafe_allow_html=True)
                     st.markdown(f"<textarea disabled style='height:100px;width:100%;font-size:20px;'>{new_response}</textarea>", unsafe_allow_html=True)
-                    #st.text_area(f"Answer {len(st.session_state.queries)}", value=new_response, disabled=True)
                            
     # Stop interaction button
     if st.button('Stop Interaction'):
