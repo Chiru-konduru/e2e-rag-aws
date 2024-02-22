@@ -217,8 +217,8 @@ def main():
     # Display previous queries and responses
     for i, (query, response) in enumerate(zip(st.session_state.queries, st.session_state.responses)):
     #for i, (query, response) in enumerate(st.session_state.responses):
-        st.markdown(f"**You:** 👤 {query}")
-        st.markdown(f"**AI:** 🤖 {response}")
+        st.markdown(f"👤: {query}")
+        st.markdown(f"🤖: {response}")
 
 
     # Input for user question and button to get answer  
