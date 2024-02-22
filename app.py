@@ -26,7 +26,12 @@ from langchain_community.vectorstores import faiss
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 
-## Step 1: creating/initialize Bedrock clients
+from langchain.llms import OpenAI
+
+# Global variable to hold the vector store once created
+vectorstore_faiss = None
+
+# Step 1: creating/initialize Bedrock clients
 # Access the AWS credentials from Streamlit's secrets
 aws_access_key_id = st.secrets["aws"]["aws_access_key_id"]
 aws_secret_access_key = st.secrets["aws"]["aws_secret_access_key"]
@@ -39,9 +44,11 @@ bedrock = boto3.client(
     aws_access_key_id=aws_access_key_id,
     aws_secret_access_key=aws_secret_access_key
 )
+#Bedrock client for testing locally
 #bedrock = boto3.client(service_name = "bedrock-runtime")
 
 bedrock_embedding = BedrockEmbeddings(model_id = "amazon.titan-embed-text-v1", client = bedrock)
+
 
 # Define the directory to save uploaded files -local
 #path_to_save = 'C:/Users/kchir/OneDrive/Desktop/AWS Projects/e2e-RAG/data'
@@ -98,14 +105,27 @@ def get_vector_store(docs):
     vectorstore_faiss.save_local("faiss_index")
     return vectorstore_faiss
 
+# Loading LLM model from Bedrock
 def get_llama_llm():
     llm = Bedrock(model_id="meta.llama2-13b-chat-v1", client = bedrock,
                   model_kwargs={"max_gen_len":512, "temperature": 0.7, "top_p": 0.95})
     return llm
 
+# # Loading Gemma model from local server using LM Studio
+# def get_gemma_llm():
+#     # Initialize the OpenAI client to point to your local server
+#     llm_config = OpenAI(base_url="http://localhost:5000/v1", 
+#                         api_key="not-needed",
+#                         temperature = 0.5,
+#                         )
+#     llm = llm_config
+#     return llm
+    
+
+
 prompt_template = """
  Human: Use the following pieces of context to provide a concise answer to the question at the end. 
-Please summarize with at least 250 words with detailed explanations. If you don't know the answer, just say that you don't know. 
+If you don't know the answer, just say that you don't know. 
 Don't try to make up an answer.
 <context>
 {context}
@@ -139,8 +159,7 @@ def get_response_llm(llm, vectorstore_faiss, query):
     answer = qa({"query":query})
     return answer['result']
 
-# Global variable to hold the vector store once created
-vectorstore_faiss = None
+
 
 # Add a function to handle responses and store them
 def store_response(key, response):
@@ -160,9 +179,6 @@ def main():
     #st.header("ConverseDoc: Explore PDFs and Ask Questions!")
     st.markdown("<h1 style='text-align: center; color: white;'>ConverseDoc: Explore PDFs and Ask Questions!</h1>", unsafe_allow_html=True)
 
-
-    global vectorstore_faiss
-    
     # Use session_state to store the vector store and the initial response
     if 'vectorstore_faiss' not in st.session_state:
         st.session_state.vectorstore_faiss = None
@@ -189,7 +205,7 @@ def main():
         for uploaded_file in uploaded_files:
             save_successful = save_uploaded_file(uploaded_file)
             if save_successful:
-                st.success(f"File  {uploaded_file.name}saved successfully.")
+                st.success(f"File  {uploaded_file.name} saved successfully.")
             else:
                 st.error(f"Failed to save file {uploaded_file.name}.")
 
@@ -199,33 +215,40 @@ def main():
             st.session_state.vectorstore_faiss = get_vector_store(docs)
 
     # Display previous queries and responses
-    for i, response in enumerate(st.session_state.responses):
-        st.markdown(f"<h3 style='color: white;'>Question {i+1}</h3>", unsafe_allow_html=True)
-        st.markdown(f"<textarea disabled style='height:100px;width:100%;font-size:20px;'>{st.session_state.queries[i]}</textarea>", unsafe_allow_html=True)
-        st.markdown(f"<h3 style='color: White;'>Answer {i+1}</h3>", unsafe_allow_html=True)
-        st.markdown(f"<textarea disabled style='height:100px;width:100%;font-size:20px;'>{response}</textarea>", unsafe_allow_html=True)
+    for i, (query, response) in enumerate(zip(st.session_state.queries, st.session_state.responses)):
+    #for i, (query, response) in enumerate(st.session_state.responses):
+        st.markdown(f"**You:** 👤 {query}")
+        st.markdown(f"**AI:** 🤖 {response}")
 
 
-    # Input for user question and button to get answer      
-    new_question  = st.text_input("Ask a Question from the uploaded PDF Files", key="new_query")
-    if st.button("Get Answer") and new_question:
+    # Input for user question and button to get answer  
+    input_placeholder = st.empty()    
+    new_question  = input_placeholder.text_input("Ask a Question from the uploaded PDF Files", 
+                                                  key="new_query")
+    st.markdown("Note: Please type in your questions in the text box above and click the 'Get Answer' button to get a response.")
+    if st.button("Get Answer"):
+        if new_question:
             with st.spinner("Fetching answer..."):
                 if st.session_state.vectorstore_faiss is None:
                     #Load the vector store; it should be updated with new documents
                     st.session_state.vectorstore_faiss = faiss.FAISS.load_local("faiss_index", bedrock_embedding)
                 
+                #Ensure the LLM model is loaded
                 if st.session_state.llm is None:
                     st.session_state.llm = get_llama_llm()
 
+                #get the response from the LLM model
                 if st.session_state.vectorstore_faiss is not None and st.session_state.llm is not None:
                     new_response  = get_response_llm(st.session_state.llm, st.session_state.vectorstore_faiss, new_question)
+                    
+                    # Append the new question and response to the session state
                     st.session_state.queries.append(new_question)
                     st.session_state.responses.append(new_response)
-                    st.markdown(f"<h3 style='color: white ;'>Answer {len(st.session_state.queries)}</h3>", unsafe_allow_html=True)
-                    st.markdown(f"<textarea disabled style='height:100px;width:100%;font-size:20px;'>{new_response}</textarea>", unsafe_allow_html=True)
-                           
+                    st.markdown(f"👤: {new_question}")
+                    st.markdown(f" 🤖: {new_response}")
+         
     # Stop interaction button
-    if st.button('Stop Interaction'):
+    if st.button('Stop Interaction', key="stop_interaction_button"):
         st.session_state.user_has_stopped = True
         st.warning('Interaction has been stopped. Refresh the page to start again.')
 
