@@ -27,7 +27,9 @@ FAISS is selected for its exceptional performance in managing similarity searche
 - Its scalability and performance, capable of handling large datasets efficiently.
 - Optimized memory usage, facilitating effective data management.
 - Compatibility with the embedding and language model technologies used in ConverseDoc, ensuring a smooth and integrated system architecture.
-- Open Source
+- Library vs. Service: FAISS is a library rather than a fully managed service. It's designed to be integrated into applications and systems directly, giving developers control over the deployment environment, whether on local machines, on-premises servers, or cloud instances.
+- Quantization and Indexing: FAISS emphasizes advanced quantization techniques and offers a wide range of indexing strategies for efficient storage and fast search. This focus allows for handling very large datasets with reduced memory footprints.
+- GPU/CPU Optimization: Offers extensive support for both CPU and GPU, enabling high performance for both batch processing and real-time search tasks. Users can choose between or combine both computational resources based on their specific requirements.
 
 ## Embedding and Language Model
 
